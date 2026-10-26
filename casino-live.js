@@ -364,11 +364,13 @@ async function rouletteSpin() {
 // --- Crash : la fusée de la Maison ---
 // la fusée monte un peu moins vite qu'avant (x2 en ~7,7 s) : le temps de réagir
 const CR_WINDOW = 25 * 1000 * FAST, CR_TICK = 900, CR_RATE = 0.09, CR_GRACE = 1200;
+// CR_EDGE : la fusée atteint x2 dans 44 % des vols, x1 (explosion immédiate) dans 12 %.
+// CR_MIN_CASH : pas d'encaissement avant ce multiplicateur (sinon retirer tout de suite gagne presque à coup sûr).
+const CR_EDGE = 0.88, CR_MIN_CASH = 1.5;
 const crashAt = (start, now) => Math.max(1, Math.exp((CR_RATE * (now - start)) / 1000));
 function drawCrashPoint() {
   const u = Math.random();
-  if (u < 0.04) return 1; // explosion immédiate : l'avantage de la maison
-  return Math.min(50, Math.max(1, Math.floor((0.97 / (1 - u)) * 100) / 100));
+  return Math.min(50, Math.max(1, Math.floor((CR_EDGE / (1 - u)) * 100) / 100));
 }
 function crashBoard(image = null) {
   const c = live.crash, closed = closedLine();
@@ -376,14 +378,14 @@ function crashBoard(image = null) {
   const desc =
     closed ??
     (phase === "fly"
-      ? `🚀 **La fusée décolle !** Cliquez sur **Encaisser** avant qu'elle explose.`
+      ? `🚀 **La fusée décolle !** Cliquez sur **Encaisser** avant qu'elle explose (possible à partir de **x${CR_MIN_CASH.toFixed(2)}**).`
       : phase === "bet"
         ? `⏳ **Décollage <t:${Math.floor(c.flyAt / 1000)}:R>** — misez maintenant !`
         : "La fusée attend la première mise : dès qu'un joueur mise, le décollage est prévu 25 secondes plus tard.");
   const embed = new EmbedBuilder()
     .setColor(phase === "fly" ? 0x0ea5e9 : 0x1e1b4b)
     .setTitle("🚀 Crash — la fusée de la Maison")
-    .setDescription(`${desc}\n\nPlus vous attendez, plus le multiplicateur monte… mais si la fusée explose avant votre encaissement, la mise est perdue. Vous pouvez fixer un **encaissement automatique**.`)
+    .setDescription(`${desc}\n\nPlus vous attendez, plus le multiplicateur monte… mais si la fusée explose avant votre encaissement, la mise est perdue. On ne peut pas encaisser avant **x${CR_MIN_CASH.toFixed(2)}**. Vous pouvez fixer un **encaissement automatique**.`)
     .addFields({ name: "🎟️ Passagers", value: betsList(c?.bets ?? [], (b) => `${b.out ? "✅" : phase === "fly" ? "🚀" : "🎟️"} **${pseudo(b.userId)}** — ${formatEuro(b.amount)}${b.out ? ` · encaissé à **x${b.out.toFixed(2)}**` : b.auto ? ` · auto x${b.auto.toFixed(2)}` : ""}`) })
     .setFooter({ text: `Derniers vols : ${load().crashHistory.slice(-8).map((h) => `x${h.toFixed(2)}`).join(" · ") || "—"}` });
   if (image) embed.setImage("attachment://crash.jpg");
@@ -418,7 +420,7 @@ function crashFlightPayload(m) {
   const embed = new EmbedBuilder()
     .setColor(m >= 5 ? 0xf59e0b : m >= 2 ? 0x22c55e : 0x0ea5e9)
     .setTitle(`🚀 x${m.toFixed(2)}`)
-    .setDescription("**La fusée monte !** Cliquez sur **Encaisser** : vous êtes payé au multiplicateur de l'instant exact de votre clic.")
+    .setDescription(`**La fusée monte !** Cliquez sur **Encaisser** : vous êtes payé au multiplicateur de l'instant exact de votre clic (à partir de **x${CR_MIN_CASH.toFixed(2)}**).`)
     .addFields({ name: "🎟️ Passagers", value: betsList(c.bets, (b) => `${b.out ? "✅" : "🚀"} **${pseudo(b.userId)}** — ${formatEuro(b.amount)}${b.out ? ` · encaissé à **x${b.out.toFixed(2)}** (+${formatEuro(b.paid ?? 0)})` : ` · vaut **${formatEuro(round2(b.amount * m))}**`}`) })
     .setFooter({ text: `Derniers vols : ${load().crashHistory.slice(-8).map((h) => `x${h.toFixed(2)}`).join(" · ") || "—"}` });
   if (HEADERS.crash) embed.setImage("attachment://salle-crash.jpg");
@@ -427,7 +429,7 @@ function crashFlightPayload(m) {
     components: [
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("casino_x_cr_bet").setLabel("Monter à bord").setEmoji("🎟️").setStyle(ButtonStyle.Primary).setDisabled(true),
-        new ButtonBuilder().setCustomId("casino_x_cr_cash").setLabel(`Encaisser à x${m.toFixed(2)}`).setEmoji("💰").setStyle(ButtonStyle.Success)
+        new ButtonBuilder().setCustomId("casino_x_cr_cash").setLabel(m < CR_MIN_CASH ? `Encaisser dès x${CR_MIN_CASH.toFixed(2)}` : `Encaisser à x${m.toFixed(2)}`).setEmoji("💰").setStyle(ButtonStyle.Success)
       ),
     ],
   };
@@ -595,7 +597,7 @@ async function handleLiveInteraction(interaction, client) {
       return true;
     }
     await interaction.showModal(
-      betModal("casino_x_crm", "🚀 Monter à bord", "Mise (€)", new TextInputBuilder().setCustomId("auto").setLabel("Encaissement auto (ex. 2,5) — facultatif").setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(6))
+      betModal("casino_x_crm", "🚀 Monter à bord", "Mise (€)", new TextInputBuilder().setCustomId("auto").setLabel(`Encaissement auto dès x${String(CR_MIN_CASH).replace(".", ",")} (facultatif)`).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(6))
     );
     return true;
   }
@@ -610,7 +612,7 @@ async function handleLiveInteraction(interaction, client) {
     }
     const amount = parseAmount(interaction.fields.getTextInputValue("mise"));
     const autoRaw = Number(String(interaction.fields.getTextInputValue("auto") || "").replace(",", ".").replace(/[^\d.]/g, ""));
-    const auto = autoRaw >= 1.01 ? Math.min(50, autoRaw) : null;
+    const auto = autoRaw ? Math.min(50, Math.max(CR_MIN_CASH, autoRaw)) : null;
     const e = liveBet(interaction, amount, "Crash", "crash");
     if (e) {
       await interaction.reply({ content: e, ephemeral: true });
@@ -645,6 +647,10 @@ Gardez ce bouton sous la main : il encaisse au multiplicateur de l'instant où v
     const m = crashAt(c.start, clickAt);
     if (m >= c.point) {
       await interaction.reply({ content: `💥 La fusée a explosé à x${c.point.toFixed(2)} juste avant votre clic… trop tard !`, ephemeral: true });
+      return true;
+    }
+    if (m < CR_MIN_CASH) {
+      await interaction.reply({ content: `⏳ Trop tôt : on ne peut encaisser qu'à partir de **x${CR_MIN_CASH.toFixed(2)}** (la fusée est à x${(Math.floor(m * 100) / 100).toFixed(2)}).`, ephemeral: true });
       return true;
     }
     const paid = cashOut(b, Math.max(1, Math.floor(m * 100) / 100));
