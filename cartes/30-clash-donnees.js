@@ -1,0 +1,189 @@
+
+// --- Clash de la Maison : chaque joueur bâtit sa Maison, la défend, et attaque celles des autres ---
+// Ressources propres au jeu (or et essence) : elles ne touchent pas aux euros du serveur.
+// Les troupes sont les cartes de la collection du joueur ; les combats sont simulés puis animés.
+const CLASH_GRID = 24;
+const CLASH_BUILDINGS = {
+  manoir: { name: "Le Manoir", emoji: "🏰", fluent: "Castle", kind: "core", size: 3, color: "#a78bfa", hp: (L) => 1200 + 700 * L, cost: (L) => ({ or: [0, 0, 2500, 7500, 18000, 40000, 90000][L] }), time: (L) => [0, 0, 20, 90, 240, 600, 1200][L] },
+  mine: { name: "Mine d'or", emoji: "⛏️", fluent: "Pick", kind: "resource", res: "or", size: 2, color: "#fbbf24", hp: (L) => 350 + 160 * L, rate: (L) => 50 * L, cost: (L) => ({ essence: 200 * L * L }), time: (L) => Math.round(5 * L * L) },
+  distillerie: { name: "Distillerie d'essence", emoji: "⚗️", fluent: "Alembic", kind: "resource", res: "essence", size: 2, color: "#c084fc", hp: (L) => 350 + 160 * L, rate: (L) => 45 * L, cost: (L) => ({ or: 200 * L * L }), time: (L) => Math.round(5 * L * L) },
+  coffre: { name: "Coffre-fort", emoji: "🧰", fluent: "Toolbox", kind: "storage", size: 2, color: "#f59e0b", hp: (L) => 600 + 260 * L, store: (L) => 1000 * L * L, cost: (L) => ({ or: 300 * L * L, essence: 120 * L * L }), time: (L) => Math.round(8 * L * L) },
+  caserne: { name: "Caserne", emoji: "⛺", fluent: "Tent", kind: "army", size: 2, color: "#22c55e", hp: (L) => 500 + 220 * L, slots: (L) => 3 + L, cost: (L) => ({ essence: 400 * L * L }), time: (L) => Math.round(10 * L * L) },
+  canon: { name: "Canon", emoji: "💣", fluent: "Bomb", kind: "defense", size: 2, color: "#ef4444", hp: (L) => 520 + 230 * L, dps: (L) => 14 + 9 * L, range: 4.5, cost: (L) => ({ or: 450 * L * L }), time: (L) => Math.round(8 * L * L) },
+  tour: { name: "Tour de l'IRF", emoji: "🏹", fluent: "Bow and arrow", kind: "defense", size: 2, color: "#38bdf8", hp: (L) => 460 + 190 * L, dps: (L) => 9 + 7 * L, range: 7, cost: (L) => ({ or: 520 * L * L }), time: (L) => Math.round(10 * L * L) },
+  mortier: { name: "Mortier", emoji: "🎯", fluent: "Bullseye", kind: "defense", size: 2, color: "#fb7185", hp: (L) => 600 + 240 * L, dps: (L) => 8 + 6 * L, range: 8, minRange: 2.5, splash: 1.8, cost: (L) => ({ or: 900 * L * L }), time: (L) => Math.round(14 * L * L) },
+};
+// nombre de bâtiments autorisés selon le niveau du Manoir
+const CLASH_COUNTS = {
+  mine: [0, 1, 2, 2, 3, 3, 4],
+  distillerie: [0, 1, 1, 2, 2, 3, 3],
+  coffre: [0, 1, 1, 2, 2, 2, 3],
+  caserne: [0, 1, 1, 1, 1, 2, 2],
+  canon: [0, 1, 1, 2, 2, 3, 3],
+  tour: [0, 0, 1, 1, 2, 2, 3],
+  mortier: [0, 0, 0, 1, 1, 2, 2],
+};
+const CLASH_MAX_MANOIR = 6;
+const CLASH_BUILDERS = 2;
+const CLASH_RES = { or: ["🪙", "Or"], essence: ["🔮", "Essence"] };
+const CLASH_ATTACKS_PER_DAY = 8; // plafond par jour, en plus de la formation
+const CLASH_TRAIN_MIN = 15; // après une attaque, les troupes se reforment pendant 15 minutes
+const CLASH_TROOP_COST = 30; // essence par troupe engagée
+const CLASH_BUFFER_HOURS = 8; // une mine se remplit en 8 h, puis s'arrête tant qu'on ne récolte pas
+const CLASH_SPEEDUP_DUST = 2; // ✨ par minute de chantier restante
+
+function clashState() {
+  const st = load();
+  st.clash ??= {};
+  st.clashMeta ??= { war: null, wars: [] };
+  return st.clash;
+}
+function newBase(user) {
+  let id = 0;
+  const b = (type, level = 1) => ({ id: `b${id++}`, type, level });
+  return {
+    owner: user.id,
+    name: user.name,
+    avatar: user.avatar ?? null,
+    created: Date.now(),
+    res: { or: 600, essence: 600 },
+    resAt: Date.now(),
+    buildings: [b("manoir"), b("mine"), b("distillerie"), b("coffre"), b("caserne"), b("canon")],
+    army: [],
+    trophies: 0,
+    shield: 0,
+    log: [],
+    attacks: { day: null, n: 0 },
+    stats: { attacks: 0, wins: 0, stars: 0, defenses: 0, defWins: 0, loot: 0 },
+  };
+}
+const manoirOf = (base) => base.buildings.find((x) => x.type === "manoir")?.level ?? 1;
+// ce que le Manoir garde lui-même : avec les coffres au niveau du Manoir, sa prochaine amélioration tient toujours dans le stock
+const CLASH_MANOIR_STORE = [0, 2000, 5000, 10000, 20000, 50000, 70000];
+// capacité de stockage : le Manoir et les coffres
+function clashCap(base) {
+  const L = manoirOf(base);
+  return CLASH_MANOIR_STORE[L] + base.buildings.filter((x) => x.type === "coffre").reduce((a, x) => a + CLASH_BUILDINGS.coffre.store(x.level), 0);
+}
+// le prix dépasse ce que les coffres peuvent contenir : il faut d'abord les agrandir
+const clashTooBig = (base, cost) => Object.values(cost).some((v) => v > clashCap(base));
+// production : accumulée au fil du temps jusqu'au plafond
+function clashTick(base) {
+  const now = Date.now(), hours = (now - (base.resAt ?? now)) / 3600000;
+  if (hours > 0) {
+    for (const x of base.buildings) {
+      const def = CLASH_BUILDINGS[x.type];
+      if (!def.res || x.upgrading || x.level < 1) continue;
+      x.stock = Math.min(def.rate(x.level) * CLASH_BUFFER_HOURS, (x.stock ?? 0) + def.rate(x.level) * hours);
+    }
+  }
+  base.resAt = now;
+  // chantiers terminés
+  const done = [];
+  for (const x of base.buildings) {
+    if (x.upgrading && x.upgrading.done <= now) {
+      x.level = x.upgrading.to;
+      done.push(x);
+      delete x.upgrading;
+    }
+  }
+  return done;
+}
+// ce qui attend d'être récolté dans les mines et distilleries
+function clashBuffers(base) {
+  const out = { or: 0, essence: 0 };
+  for (const x of base.buildings) if (CLASH_BUILDINGS[x.type].res) out[CLASH_BUILDINGS[x.type].res] += Math.floor(x.stock ?? 0);
+  return out;
+}
+// récolte : la réserve des bâtiments passe dans les coffres (dans la limite de la place)
+function clashCollect(base) {
+  clashTick(base);
+  const cap = clashCap(base), got = { or: 0, essence: 0 };
+  for (const x of base.buildings) {
+    const res = CLASH_BUILDINGS[x.type].res;
+    if (!res || !x.stock) continue;
+    const take = Math.max(0, Math.min(Math.floor(x.stock), cap - base.res[res]));
+    base.res[res] += take;
+    x.stock -= take;
+    got[res] += take;
+  }
+  return got;
+}
+function clashRates(base) {
+  const out = {};
+  for (const res of ["or", "essence"]) out[res] = base.buildings.filter((x) => CLASH_BUILDINGS[x.type].res === res && !x.upgrading).reduce((a, x) => a + CLASH_BUILDINGS[x.type].rate(x.level), 0);
+  return out;
+}
+const busyBuilders = (base) => base.buildings.filter((x) => x.upgrading).length;
+const maxLevelOf = (type, manoir) => (type === "manoir" ? CLASH_MAX_MANOIR : Math.min(CLASH_MAX_MANOIR, manoir + (type === "mine" || type === "distillerie" ? 1 : 0)));
+const armySlots = (base) => base.buildings.filter((x) => x.type === "caserne").reduce((a, x) => a + CLASH_BUILDINGS.caserne.slots(x.level), 0);
+const costText = (cost) => Object.entries(cost).filter(([, v]) => v > 0).map(([k, v]) => `${v.toLocaleString("fr-FR")} ${k === "or" ? "or" : "essence"}`).join(" + ") || "gratuit";
+const minutesText = (m) => (m < 60 ? `${m} min` : m < 1440 ? `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60}` : ""}` : `${Math.floor(m / 1440)} j ${Math.floor((m % 1440) / 60)} h`);
+// ce que le joueur peut construire ou améliorer maintenant
+function clashOptions(base) {
+  const L = manoirOf(base), opts = [];
+  for (const x of base.buildings) {
+    const def = CLASH_BUILDINGS[x.type];
+    if (x.upgrading || x.level >= maxLevelOf(x.type, L)) continue;
+    opts.push({ kind: "up", id: x.id, type: x.type, to: x.level + 1, cost: def.cost(x.level + 1), time: def.time(x.level + 1) });
+  }
+  for (const [type, counts] of Object.entries(CLASH_COUNTS)) {
+    const have = base.buildings.filter((x) => x.type === type).length;
+    if (have < counts[L]) opts.push({ kind: "new", type, to: 1, cost: CLASH_BUILDINGS[type].cost(1), time: CLASH_BUILDINGS[type].time(1) });
+  }
+  return opts;
+}
+function clashCanPay(base, cost) {
+  return Object.entries(cost).every(([k, v]) => (base.res[k] ?? 0) >= v);
+}
+function clashStart(base, opt) {
+  if (busyBuilders(base) >= CLASH_BUILDERS) return "Vos deux ouvriers sont déjà occupés.";
+  if (!clashCanPay(base, opt.cost))
+    return clashTooBig(base, opt.cost)
+      ? `Vos coffres sont trop petits pour ce chantier (${costText(opt.cost)}, vous stockez ${clashCap(base).toLocaleString("fr-FR")} au maximum) : améliorez d'abord un coffre-fort.`
+      : `Il vous manque des ressources (${costText(opt.cost)}).`;
+  for (const [k, v] of Object.entries(opt.cost)) base.res[k] -= v;
+  if (opt.kind === "new") {
+    const id = `b${Date.now().toString(36)}${Math.floor(Math.random() * 99)}`;
+    base.buildings.push({ id, type: opt.type, level: 0, upgrading: { to: 1, done: Date.now() + opt.time * MINUTE } });
+  } else {
+    const x = base.buildings.find((y) => y.id === opt.id);
+    x.upgrading = { to: opt.to, done: Date.now() + opt.time * MINUTE };
+  }
+  return null;
+}
+
+// --- Plan de la base : placement automatique sur la grille ---
+// Le Manoir au centre, les défenses autour, puis la caserne et les coffres, et la production à l'extérieur.
+function clashLayout(base) {
+  const placed = [], c = CLASH_GRID / 2;
+  const ring = (list, radius, phase) => {
+    list.forEach((x, k) => {
+      const a = phase + (k / Math.max(1, list.length)) * Math.PI * 2;
+      placed.push({ ...x, x: c + Math.cos(a) * radius, y: c + Math.sin(a) * radius * 0.92 });
+    });
+  };
+  const of = (...kinds) => base.buildings.filter((x) => x.level > 0 && kinds.includes(CLASH_BUILDINGS[x.type].kind));
+  ring(of("core"), 0, 0);
+  ring(of("defense"), 5.3, 0.4);
+  ring(of("storage", "army"), 8.9, 1.1);
+  ring(of("resource"), 10.6, 0.65);
+  return placed;
+}
+
+// --- Bases fantômes : des Maisons gardées par l'IA quand il n'y a pas assez d'adversaires ---
+const GHOST_NAMES = ["Maison des Brumes", "Manoir Délaissé", "Villa du Notaire", "Hôtel des Ombres", "Pension Vasseur", "Domaine du Corbeau", "Maison Close-aux-Roses", "Château du Faussaire"];
+function ghostBase(manoir, seed) {
+  const R = seeded(seed);
+  const L = Math.max(1, Math.min(CLASH_MAX_MANOIR, manoir + (R() < 0.3 ? -1 : 0)));
+  const base = newBase({ id: `ghost${seed}`, name: GHOST_NAMES[seed % GHOST_NAMES.length] });
+  base.ghost = true;
+  base.buildings = [];
+  let id = 0;
+  base.buildings.push({ id: `b${id++}`, type: "manoir", level: L });
+  for (const [type, counts] of Object.entries(CLASH_COUNTS)) for (let k = 0; k < counts[L]; k++) base.buildings.push({ id: `b${id++}`, type, level: Math.max(1, Math.min(maxLevelOf(type, L), L - (R() < 0.5 ? 1 : 0))) });
+  base.res = { or: Math.round(220 * L ** 1.5 + R() * 120 * L), essence: Math.round(220 * L ** 1.5 + R() * 120 * L) };
+  for (const x of base.buildings) if (CLASH_BUILDINGS[x.type].res) x.stock = Math.round(CLASH_BUILDINGS[x.type].rate(x.level) * (1 + R() * 3));
+  base.trophies = 0;
+  return base;
+}
