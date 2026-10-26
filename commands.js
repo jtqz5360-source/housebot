@@ -1,0 +1,259 @@
+const { REST, Routes, SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
+const { clearCommand } = require("./clear");
+
+async function registerSlashCommands(client, token) {
+  const commands = [
+    new SlashCommandBuilder()
+      .setName("achat")
+      .setDescription("Demande d'achat d'un produit")
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("report")
+      .setDescription("Signaler anonymement le comportement d'un membre")
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("niveau")
+      .setDescription("Voir votre progression et votre niveau sur le serveur")
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("crédit")
+      .setDescription("Demander un crédit argent")
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("mission")
+      .setDescription(
+        "Publier une mission sur le panel intérim (Fondation uniquement)"
+      )
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("deposit")
+      .setDescription("Déposer de l'argent sur votre solde (ticket vérifié par l'IRF)")
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("solde")
+      .setDescription("Voir combien d'argent vous avez")
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("argent")
+      .setDescription("Modifier l'argent d'un membre (gérants uniquement)")
+      .addStringOption((o) =>
+        o
+          .setName("action")
+          .setDescription("Ajouter, retirer ou définir le solde")
+          .setRequired(true)
+          .addChoices(
+            { name: "Ajouter", value: "ajouter" },
+            { name: "Retirer", value: "retirer" },
+            { name: "Définir le solde", value: "definir" }
+          )
+      )
+      .addUserOption((o) =>
+        o.setName("membre").setDescription("Le membre concerné").setRequired(true)
+      )
+      .addIntegerOption((o) =>
+        o
+          .setName("montant")
+          .setDescription("Montant en €")
+          .setRequired(true)
+          .setMinValue(0)
+          .setMaxValue(1_000_000_000)
+      )
+      .addStringOption((o) =>
+        o.setName("raison").setDescription("Pourquoi (visible dans les logs)").setMaxLength(200)
+      )
+      .toJSON(),
+    clearCommand,
+    new SlashCommandBuilder()
+      .setName("profil")
+      .setDescription("Afficher la carte d'identité d'un membre de la Maison")
+      .addUserOption((o) => o.setName("membre").setDescription("Le membre (vous par défaut)"))
+      .addBooleanOption((o) => o.setName("prive").setDescription("Afficher la carte seulement pour vous (avec vos infos privées)"))
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("succes")
+      .setDescription("Vos succès des Cartes de la Maison et le titre affiché sur votre profil")
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("vitrine")
+      .setDescription("Votre vitrine : vos trois plus belles cartes (ou celle d'un membre)")
+      .addUserOption((o) => o.setName("membre").setDescription("Voir la vitrine d'un autre membre"))
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("carte-fondation")
+      .setDescription("(Gérants) Télécharger les cartes DUO de l'équipe Fondation")
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("boutique")
+      .setDescription("La boutique de styles : dos de cartes, effets d'ouverture, décors d'Arène")
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("pass")
+      .setDescription("Votre pass de combat : paliers, récompenses, pass Premium")
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("tournoi")
+      .setDescription("Le tournoi du week-end : inscription, votre prochain match, le tableau")
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("clash")
+      .setDescription("Clash de la Maison : votre base, vos attaques et la guerre des équipes")
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("invite")
+      .setDescription("Inviter un membre (en message privé) à un combat, un échange ou dans votre équipe")
+      .addUserOption((o) => o.setName("membre").setDescription("Le membre à inviter").setRequired(true))
+      .addStringOption((o) => o.setName("type").setDescription("À quoi l'inviter ?").setRequired(true).addChoices({ name: "⚔️ Combat de cartes", value: "combat" }, { name: "🔄 Échange de cartes", value: "echange" }, { name: "🛡️ Rejoindre mon équipe", value: "equipe" }))
+      .addIntegerOption((o) => o.setName("mise").setDescription("Mise en € pour un combat (facultatif)").setMinValue(0))
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("histoire")
+      .setDescription("Le Mode Histoire : Les Secrets de la Maison, une enquête où vos choix comptent")
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("equipe")
+      .setDescription("Votre équipe (duo) : niveau, coffre commun, objectif de la semaine, cadeaux")
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("iles")
+      .setDescription("L'île des cartes : gardez-la avec vos cartes, ou attaquez son gardien")
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("codex")
+      .setDescription("Le codex des cartes : toutes celles qui vous manquent et comment les obtenir")
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("quetes")
+      .setDescription("Vos trois quêtes du jour des Cartes de la Maison")
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("aide-cartes")
+      .setDescription("Le guide complet des Cartes de la Maison")
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("carte-offrir")
+      .setDescription("(Gérants) Offrir une carte d'événement à un membre")
+      .addUserOption((o) => o.setName("membre").setDescription("Le membre qui reçoit la carte").setRequired(true))
+      .addStringOption((o) =>
+        o
+          .setName("carte")
+          .setDescription("La carte d'événement")
+          .setRequired(true)
+          .addChoices(
+            { name: "Star de la semaine (épique)", value: "ev_star" },
+            { name: "Élu(e) Maire (légendaire)", value: "ev_maire" },
+            { name: "Jackpot ! (légendaire)", value: "ev_jackpot" },
+            { name: "Podium de l'Arène (légendaire)", value: "ev_podium" },
+            { name: "Champion de l'Arène (mythique)", value: "ev_champion" }
+          )
+      )
+      .addBooleanOption((o) => o.setName("holo").setDescription("Version holographique"))
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("generation")
+      .setDescription("(Gérants) Voir ou lancer la génération de cartes suivante")
+      .addStringOption((o) => o.setName("action").setDescription("Que faire").setRequired(true).addChoices({ name: "Voir l'état", value: "statut" }, { name: "Lancer la génération suivante", value: "lancer" }, { name: "Programmer le lancement", value: "programmer" }, { name: "Annuler le lancement programmé", value: "annuler" }, { name: "Cartes en attente (nouveaux membres, entreprises)", value: "attente" }))
+      .addIntegerOption((o) => o.setName("jours").setDescription("Pour « programmer » : dans combien de jours (21 par défaut)").setMinValue(1).setMaxValue(90))
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("combat")
+      .setDescription("Défier un membre en combat de cartes (ou ouvrir l'Arène)")
+      .addUserOption((o) => o.setName("membre").setDescription("Le membre à défier (vide : menu de l'Arène)"))
+      .addIntegerOption((o) => o.setName("mise").setDescription("Mise en € de chaque joueur (facultatif)").setMinValue(0).setMaxValue(1000000))
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("arene")
+      .setDescription("Classement et menu de l'Arène des cartes")
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("marche")
+      .setDescription("Le marché des cartes : acheter et vendre entre membres")
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("echange")
+      .setDescription("Inviter un membre à échanger : vous posez vos cartes ensemble, en direct")
+      .addUserOption((o) => o.setName("membre").setDescription("Le membre avec qui échanger").setRequired(true))
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("album")
+      .setDescription("Feuilleter votre album de cartes (ou celui d'un autre membre)")
+      .addUserOption((o) => o.setName("membre").setDescription("Voir l'album d'un autre membre"))
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("inventaire")
+      .setDescription("Vos boosters de cartes, votre collection et vos statistiques")
+      .addUserOption((o) => o.setName("membre").setDescription("Voir l'inventaire d'un autre membre"))
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("convocation")
+      .setDescription("Convoquer un membre dans le Bureau de la Chef Chloé (Direction uniquement)")
+      .addUserOption((o) => o.setName("membre").setDescription("Le membre convoqué").setRequired(true))
+      .addStringOption((o) => o.setName("heure").setDescription("Heure du rendez-vous, ex. 14h30").setRequired(true).setMaxLength(8))
+      .addStringOption((o) => o.setName("motif").setDescription("Le motif de la convocation").setRequired(true).setMaxLength(300))
+      .addStringOption((o) =>
+        o
+          .setName("jour")
+          .setDescription("Jour du rendez-vous (demain par défaut)")
+          .addChoices({ name: "Demain", value: "demain" }, { name: "Aujourd'hui", value: "aujourdhui" }, { name: "Après-demain", value: "apres_demain" })
+      )
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("proces")
+      .setDescription("Ouvrir un procès contre un membre devant le jury de la Fondation (Direction uniquement)")
+      .addUserOption((o) => o.setName("membre").setDescription("L'accusé(e)").setRequired(true))
+      .addStringOption((o) => o.setName("accusation").setDescription("Ce qui lui est reproché").setRequired(true).setMaxLength(400))
+      .addStringOption((o) => o.setName("preuves").setDescription("Éléments du dossier (facultatif)").setMaxLength(400))
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("enchere")
+      .setDescription("Mettre quelque chose aux enchères : le plus offrant l'emporte")
+      .addStringOption((o) => o.setName("objet").setDescription("Ce que vous vendez").setRequired(true).setMaxLength(80))
+      .addIntegerOption((o) => o.setName("prix").setDescription("Mise à prix (€)").setRequired(true).setMinValue(1).setMaxValue(10_000_000))
+      .addIntegerOption((o) =>
+        o
+          .setName("duree")
+          .setDescription("Durée de la vente")
+          .setRequired(true)
+          .addChoices({ name: "1 heure", value: 1 }, { name: "6 heures", value: 6 }, { name: "12 heures", value: 12 }, { name: "24 heures", value: 24 }, { name: "48 heures", value: 48 }, { name: "72 heures", value: 72 })
+      )
+      .addStringOption((o) => o.setName("description").setDescription("Quelques mots sur l'objet").setMaxLength(300))
+      .addAttachmentOption((o) => o.setName("image").setDescription("Une photo de l'objet"))
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("emotes")
+      .setDescription("Vos emotes de combat : collection, achats et favorites")
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("raid")
+      .setDescription("Raids des cartes : voir le prochain raid (les gérants peuvent en lancer un tout de suite)")
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("bourse")
+      .setDescription("La Bourse de la Maison : acheter et vendre des parts des entreprises")
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("studio")
+      .setDescription("Administration : ouvrir le studio 🔞 d'un membre")
+      .addUserOption((o) => o.setName("membre").setDescription("La créatrice").setRequired(true))
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels)
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("casier")
+      .setDescription("Voir le casier judiciaire d'un membre")
+      .addUserOption((o) => o.setName("membre").setDescription("Le membre (vous par défaut)"))
+      .toJSON(),
+  ];
+
+  const rest = new REST({ version: "10" }).setToken(token);
+  for (const guild of client.guilds.cache.values()) {
+    await rest
+      .put(Routes.applicationGuildCommands(client.user.id, guild.id), {
+        body: commands,
+      })
+      .catch((err) =>
+        console.warn(`Commandes slash (${guild.name}):`, err.message)
+      );
+  }
+  console.log("Commandes /achat, /report, /niveau, /crédit, /mission, /solde, /argent, /clear, /profil, /inventaire, /album, /marche, /echange, /combat, /arene, /quetes, /aide-cartes, /carte-offrir, /generation, /convocation, /proces, /casier, /enchere, /bourse, /raid et /emotes enregistrées");
+}
+
+module.exports = { registerSlashCommands };
